@@ -59,12 +59,26 @@ void HttpServer::start() {
     setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
 #else
     setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#ifdef SO_REUSEPORT
+    setsockopt(s, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+#endif
 #endif
 
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(port_);
+
+    // Set timeout để accept() không bị block vô hạn khi nhấn Ctrl+C
+#ifdef _WIN32
+    DWORD tv = 500;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+#else
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 500000; // 500ms
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+#endif
 
     if (bind(s, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         std::cerr << "[HttpServer] Lỗi bind port " << port_ << "!" << std::endl;

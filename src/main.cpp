@@ -17,6 +17,8 @@ void signal_handler(int sig) {
     (void)sig;
     std::cout << "\n[Agent] Nhận tín hiệu ngắt (Ctrl+C). Đang dừng hệ thống an toàn..." << std::endl;
     g_shutdown_requested = true;
+    // Ngay lập tức E-Stop nếu có tiến trình motor
+    ProcessRunner::instance().emergency_stop("Tín hiệu dừng từ bàn phím (Ctrl+C)");
 }
 
 int main(int argc, char* argv[]) {
