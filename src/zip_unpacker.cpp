@@ -278,9 +278,10 @@ bool ZipUnpacker::extract_buffer(const std::vector<uint8_t>& zip_data, const std
         }
 
         std::string filename(reinterpret_cast<const char*>(&zip_data[name_offset]), hdr->filename_length);
+        std::replace(filename.begin(), filename.end(), '\\', '/');
         size_t data_offset = name_offset + hdr->filename_length + hdr->extra_field_length;
 
-        bool is_dir = filename.empty() || filename.back() == '/' || filename.back() == '\\';
+        bool is_dir = filename.empty() || filename.back() == '/';
         fs::path target_path = fs::path(output_dir) / filename;
 
         if (is_dir) {
