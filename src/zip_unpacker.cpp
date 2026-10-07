@@ -263,6 +263,38 @@ bool ZipUnpacker::extract_buffer(const std::vector<uint8_t>& zip_data, const std
         return false;
     }
 
+#ifndef _WIN32
+    // Thử sử dụng lệnh unzip hoặc python3 trên Linux (nhanh, chuẩn và hỗ trợ mọi định dạng ZIP Data Descriptor)
+    static std::atomic<uint64_t> s_zip_cnt{0};
+    uint64_t zid = ++s_zip_cnt;
+    fs::path temp_zip_path = fs::path(output_dir) / ("temp_pkg_" + std::to_string(zid) + ".zip");
+
+    {
+        std::ofstream zf(temp_zip_path, std::ios::binary);
+        if (zf.is_open()) {
+            zf.write(reinterpret_cast<const char*>(zip_data.data()), zip_data.size());
+            zf.close();
+        }
+    }
+
+    if (fs::exists(temp_zip_path)) {
+        std::string cmd = "unzip -q -o \"" + temp_zip_path.string() + "\" -d \"" + output_dir + "\" >/dev/null 2>&1";
+        int ret = std::system(cmd.c_str());
+        if (ret == 0) {
+            try { fs::remove(temp_zip_path); } catch (...) {}
+            return true;
+        }
+
+        std::string py_cmd = "python3 -m zipfile -e \"" + temp_zip_path.string() + "\" \"" + output_dir + "\" >/dev/null 2>&1";
+        ret = std::system(py_cmd.c_str());
+        if (ret == 0) {
+            try { fs::remove(temp_zip_path); } catch (...) {}
+            return true;
+        }
+        try { fs::remove(temp_zip_path); } catch (...) {}
+    }
+#endif
+
     size_t offset = 0;
     while (offset + sizeof(ZipLocalHeader) <= zip_data.size()) {
         const auto* hdr = reinterpret_cast<const ZipLocalHeader*>(&zip_data[offset]);
