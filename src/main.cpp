@@ -371,6 +371,60 @@ int main(int argc, char* argv[]) {
     });
 
     // =========================================================================
+    // 2.3 ROUTE: POST /api/action/cleanup (Dọn dẹp cache và bộ nhớ Actions)
+    // =========================================================================
+    server.route("POST", "/api/action/cleanup", [&](const HttpRequest& req, HttpResponse& res) {
+        if (ProcessRunner::instance().is_busy()) {
+            JsonValue err = JsonValue::object();
+            err.set("status", "BUSY");
+            err.set("message", "Không thể dọn dẹp khi tiến trình motor đang chạy!");
+            res.set_json(409, err);
+            return;
+        }
+
+        std::string specific_id = "";
+        if (!req.body.empty()) {
+            JsonValue body_json = JsonValue::parse(req.body_as_string());
+            if (body_json.has("action_id")) specific_id = body_json.get("action_id").as_string();
+        }
+
+        int deleted_count = 0;
+        try {
+            if (!specific_id.empty()) {
+                fs::path p = actions_base_dir / specific_id;
+                if (fs::exists(p)) {
+                    fs::remove_all(p);
+                    deleted_count++;
+                }
+            } else {
+                // Xóa toàn bộ actions và các thư mục staging rác
+                if (fs::exists(actions_base_dir)) {
+                    for (const auto& entry : fs::directory_iterator(actions_base_dir)) {
+                        fs::remove_all(entry.path());
+                        deleted_count++;
+                    }
+                }
+                for (const auto& entry : fs::directory_iterator(workspace_abs)) {
+                    std::string name = entry.path().filename().string();
+                    if (name.rfind("staging_", 0) == 0) {
+                        fs::remove_all(entry.path());
+                    }
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[Cleanup] Lỗi dọn dẹp: " << e.what() << std::endl;
+        }
+
+        std::cout << "[Cleanup] 🧹 Đã dọn dẹp " << deleted_count << " gói Action khỏi bộ nhớ đệm workspace." << std::endl;
+
+        JsonValue resp = JsonValue::object();
+        resp.set("status", "CLEANED");
+        resp.set("deleted_count", deleted_count);
+        resp.set("message", "Đã dọn dẹp thành công " + std::to_string(deleted_count) + " Action khỏi bộ nhớ Pi 5!");
+        res.set_json(200, resp);
+    });
+
+    // =========================================================================
     // 3. ROUTE: GET /api/action/status (Trạng thái và log bài test)
     // =========================================================================
     server.route("GET", "/api/action/status", [&](const HttpRequest& req, HttpResponse& res) {
