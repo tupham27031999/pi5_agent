@@ -47,6 +47,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "================================================================" << std::endl;
     std::cout << "   🤖 RASPBERRY PI 5 NATIVE DAEMON AGENT (C++17)                " << std::endl;
+    std::cout << "   🚀 Pipeline Preloading & Instant Execution: ENABLED (v2.0.0) " << std::endl;
     std::cout << "================================================================" << std::endl;
 #if defined(_WIN32)
     std::cout << "  * Nền tảng:  Windows (Mô Phỏng / Debug)" << std::endl;
@@ -57,6 +58,8 @@ int main(int argc, char* argv[]) {
 #endif
     std::cout << "  * Cổng HTTP: " << port << std::endl;
     std::cout << "  * Workspace: " << fs::absolute(workspace_dir).string() << std::endl;
+    std::cout << "  * Endpoints: GET /api/ping, POST /api/action/preload," << std::endl;
+    std::cout << "               POST /api/action/execute, POST /api/emergency_stop" << std::endl;
     std::cout << "================================================================" << std::endl;
 
     signal(SIGINT, signal_handler);
@@ -77,7 +80,8 @@ int main(int argc, char* argv[]) {
         JsonValue json = JsonValue::object();
         json.set("status", "OK");
         json.set("agent", "Pi5_Native_Agent");
-        json.set("version", "1.0.0");
+        json.set("version", "2.0.0");
+        json.set("pipeline_enabled", true);
 #if defined(_WIN32)
         json.set("os", "Windows_x64_Sim");
 #elif defined(__aarch64__)
