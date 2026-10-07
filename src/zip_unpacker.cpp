@@ -5,6 +5,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <algorithm>
+#include <atomic>
 
 namespace fs = std::filesystem;
 
