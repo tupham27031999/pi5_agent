@@ -242,8 +242,16 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        std::string action_id = "";
-        if (fs::exists(manifest_path)) {
+        std::string action_id = req.get_header("X-Action-Id");
+        if (action_id.empty() && !req.query.empty()) {
+            auto pos = req.query.find("action_id=");
+            if (pos != std::string::npos) {
+                auto end_pos = req.query.find('&', pos);
+                action_id = req.query.substr(pos + 10, (end_pos == std::string::npos) ? std::string::npos : (end_pos - pos - 10));
+            }
+        }
+
+        if (action_id.empty() && fs::exists(manifest_path)) {
             std::ifstream mf(manifest_path);
             std::string content((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
             JsonValue mf_json = JsonValue::parse(content);
