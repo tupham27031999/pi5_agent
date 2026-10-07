@@ -143,6 +143,15 @@ int main(int argc, char* argv[]) {
 
         // Đọc manifest.json
         fs::path manifest_path = current_action_dir / "manifest.json";
+        if (!fs::exists(manifest_path)) {
+            for (const auto& entry : fs::recursive_directory_iterator(current_action_dir)) {
+                if (entry.path().filename() == "manifest.json") {
+                    manifest_path = entry.path();
+                    break;
+                }
+            }
+        }
+
         std::string action_id = "ACTION_UNKNOWN";
         double timeout_sec = 60.0;
 
@@ -150,13 +159,21 @@ int main(int argc, char* argv[]) {
             std::ifstream mf(manifest_path);
             std::string content((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
             JsonValue mf_json = JsonValue::parse(content);
-            if (mf_json.has("action_id")) action_id = mf_json.get("action_id").as_string();
+            if (mf_json.has("action_id") && !mf_json.get("action_id").as_string().empty()) {
+                action_id = mf_json.get("action_id").as_string();
+            } else if (mf_json.has("name") && !mf_json.get("name").as_string().empty()) {
+                action_id = mf_json.get("name").as_string();
+            } else if (mf_json.has("ActionId") && !mf_json.get("ActionId").as_string().empty()) {
+                action_id = mf_json.get("ActionId").as_string();
+            }
             if (mf_json.has("timeout_sec")) timeout_sec = mf_json.get("timeout_sec").as_double(60.0);
+            else if (mf_json.has("timeout_seconds")) timeout_sec = mf_json.get("timeout_seconds").as_double(60.0);
         }
 
         std::cout << "[Deploy] Bắt đầu Action ID: " << action_id << " (Timeout: " << timeout_sec << "s)" << std::endl;
 
-        bool started = ProcessRunner::instance().deploy_and_run(current_action_dir.string(), action_id, timeout_sec);
+        fs::path run_dir = manifest_path.has_parent_path() ? manifest_path.parent_path() : current_action_dir;
+        bool started = ProcessRunner::instance().deploy_and_run(run_dir.string(), action_id, timeout_sec);
         if (started) {
             JsonValue resp = JsonValue::object();
             resp.set("action_id", action_id);
@@ -204,29 +221,53 @@ int main(int argc, char* argv[]) {
             return;
         }
 
-        // Đọc action_id từ manifest.json
+        // Đọc manifest.json (tìm ở gốc hoặc thư mục con)
         fs::path manifest_path = temp_dir / "manifest.json";
-        std::string action_id = "ACTION_PRELOADED";
+        if (!fs::exists(manifest_path)) {
+            for (const auto& entry : fs::recursive_directory_iterator(temp_dir)) {
+                if (entry.path().filename() == "manifest.json") {
+                    manifest_path = entry.path();
+                    break;
+                }
+            }
+        }
+
+        std::string action_id = "";
         if (fs::exists(manifest_path)) {
             std::ifstream mf(manifest_path);
             std::string content((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
             JsonValue mf_json = JsonValue::parse(content);
-            if (mf_json.has("action_id")) action_id = mf_json.get("action_id").as_string();
+            if (mf_json.has("action_id") && !mf_json.get("action_id").as_string().empty()) {
+                action_id = mf_json.get("action_id").as_string();
+            } else if (mf_json.has("name") && !mf_json.get("name").as_string().empty()) {
+                action_id = mf_json.get("name").as_string();
+            } else if (mf_json.has("ActionId") && !mf_json.get("ActionId").as_string().empty()) {
+                action_id = mf_json.get("ActionId").as_string();
+            }
         }
 
+        if (action_id.empty()) {
+            action_id = "ACTION_" + std::to_string(pid);
+        }
+
+        fs::path source_dir = (fs::exists(manifest_path) && manifest_path.has_parent_path()) ? manifest_path.parent_path() : temp_dir;
         fs::path target_action_dir = actions_base_dir / action_id;
+
         try {
             if (fs::exists(target_action_dir)) {
                 // Giữ lại thư mục build cũ nếu có để CMake build incremental
                 fs::path old_build = target_action_dir / "build";
-                fs::path temp_build = temp_dir / "build";
+                fs::path temp_build = source_dir / "build";
                 if (fs::exists(old_build) && !fs::exists(temp_build)) {
                     try { fs::rename(old_build, temp_build); } catch (...) {}
                 }
                 fs::remove_all(target_action_dir);
             }
             fs::create_directories(actions_base_dir);
-            fs::rename(temp_dir, target_action_dir);
+            fs::rename(source_dir, target_action_dir);
+            if (fs::exists(temp_dir) && temp_dir != target_action_dir) {
+                try { fs::remove_all(temp_dir); } catch (...) {}
+            }
         } catch (const std::exception& e) {
             std::cerr << "[Preload] Lỗi lưu trữ thư mục action: " << e.what() << std::endl;
         }
