@@ -182,7 +182,9 @@ int main(int argc, char* argv[]) {
 
         std::cout << "[Preload] Nhận gói Action ZIP tiền nạp: " << req.body.size() << " bytes" << std::endl;
 
-        fs::path temp_dir = workspace_abs / "staging_temp";
+        static std::atomic<uint64_t> s_preload_id{0};
+        uint64_t pid = ++s_preload_id;
+        fs::path temp_dir = workspace_abs / ("staging_" + std::to_string(pid));
         try {
             fs::remove_all(temp_dir);
             fs::create_directories(temp_dir);
@@ -190,6 +192,7 @@ int main(int argc, char* argv[]) {
 
         bool ok = ZipUnpacker::extract_buffer(req.body, temp_dir.string());
         if (!ok) {
+            try { fs::remove_all(temp_dir); } catch (...) {}
             JsonValue err = JsonValue::object();
             err.set("status", "EXTRACT_ERROR");
             err.set("message", "Lỗi phân tích hoặc giải nén gói ZIP tiền nạp!");
