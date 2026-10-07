@@ -53,7 +53,18 @@ public:
     /**
      * @brief Lấy chuỗi trạng thái dạng văn bản
      */
-    std::string get_state_string() const;
+    /**
+     * @brief Biên dịch trước (Pre-compile) Action Package mà không khởi chạy
+     * @param working_dir Thư mục chứa mã nguồn action
+     * @param out_log Output log của quá trình biên dịch
+     * @return true nếu biên dịch thành công và tạo ra file thực thi
+     */
+    bool precompile_action(const std::string& working_dir, std::string& out_log);
+
+    /**
+     * @brief Kiểm tra xem Action Package đã có sẵn file nhị phân thực thi chưa
+     */
+    static bool has_precompiled_binary(const std::string& working_dir);
 
     bool is_busy() const;
 

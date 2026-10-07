@@ -138,6 +138,66 @@ JsonValue ProcessRunner::get_status_json() {
     return val;
 }
 
+bool ProcessRunner::has_precompiled_binary(const std::string& working_dir) {
+    fs::path w = fs::path(working_dir);
+#ifdef _WIN32
+    return fs::exists(w / "build" / "motor_action_runner.exe") ||
+           fs::exists(w / "build" / "Release" / "motor_action_runner.exe") ||
+           fs::exists(w / "build" / "Debug" / "motor_action_runner.exe") ||
+           fs::exists(w / "build" / "runner.exe");
+#else
+    return fs::exists(w / "build" / "motor_action_runner") ||
+           fs::exists(w / "build" / "runner");
+#endif
+}
+
+bool ProcessRunner::precompile_action(const std::string& working_dir, std::string& out_log) {
+    fs::path w = fs::path(working_dir);
+    fs::path build_dir = w / "build";
+    try {
+        fs::create_directories(build_dir);
+    } catch (...) {}
+
+    fs::path cmakelists = w / "CMakeLists.txt";
+    std::string build_cmd;
+
+#ifdef _WIN32
+    if (fs::exists(cmakelists)) {
+        build_cmd = "cmake -B \"" + build_dir.string() + "\" -S \"" + w.string() + "\" && cmake --build \"" + build_dir.string() + "\" --config Release";
+    } else {
+        fs::path ps_script = w / "build_and_run.ps1";
+        if (fs::exists(ps_script)) {
+            build_cmd = "powershell.exe -ExecutionPolicy Bypass -Command \"Set-Location '" + w.string() + "'; g++ -std=c++17 -I include src/*.cpp -ladvapi32 -lws2_32 -lsetupapi -o build/runner.exe\"";
+        } else {
+            build_cmd = "powershell.exe -ExecutionPolicy Bypass -Command \"Set-Location '" + w.string() + "'; g++ -std=c++17 -I include src/*.cpp -ladvapi32 -lws2_32 -lsetupapi -o build/runner.exe\"";
+        }
+    }
+#else
+    if (fs::exists(cmakelists)) {
+        build_cmd = "cmake -B \"" + build_dir.string() + "\" -S \"" + w.string() + "\" && cmake --build \"" + build_dir.string() + "\" -j$(nproc)";
+    } else {
+        fs::path sh_script = w / "build_and_run.sh";
+        if (fs::exists(sh_script)) {
+            build_cmd = "bash -c 'cd \"" + w.string() + "\" && mkdir -p build && cd build && cmake .. && cmake --build . -j$(nproc)'";
+        } else {
+            build_cmd = "bash -c 'cd \"" + w.string() + "\" && mkdir -p build && g++ -std=c++17 -I include src/*.cpp -lpthread -o build/runner'";
+        }
+    }
+#endif
+
+    std::cout << "[Precompile] Executing build command: " << build_cmd << std::endl;
+    int ret = std::system(build_cmd.c_str());
+    out_log = "ExitCode=" + std::to_string(ret);
+
+    bool ok = has_precompiled_binary(working_dir);
+    if (ok) {
+        std::cout << "[Precompile] ✅ Thành công tạo binary cho " << working_dir << std::endl;
+    } else {
+        std::cerr << "[Precompile] ❌ Thất bại tạo binary cho " << working_dir << " (Code: " << ret << ")" << std::endl;
+    }
+    return ok;
+}
+
 void ProcessRunner::worker_thread_func(std::string working_dir, std::string action_id, double timeout_sec) {
     append_log("[System] Bắt đầu triển khai Action: " + action_id + " tại " + working_dir);
 
@@ -155,11 +215,20 @@ void ProcessRunner::worker_thread_func(std::string working_dir, std::string acti
     // 2. Xác định lệnh thực thi hoặc biên dịch
     std::string cmd;
 #ifdef _WIN32
-    fs::path exe_path = fs::absolute(fs::path(working_dir) / "build" / "motor_action_runner.exe");
+    fs::path exe_path1 = fs::absolute(fs::path(working_dir) / "build" / "motor_action_runner.exe");
+    fs::path exe_path2 = fs::absolute(fs::path(working_dir) / "build" / "Release" / "motor_action_runner.exe");
+    fs::path exe_path3 = fs::absolute(fs::path(working_dir) / "build" / "Debug" / "motor_action_runner.exe");
+    fs::path exe_path4 = fs::absolute(fs::path(working_dir) / "build" / "runner.exe");
     fs::path ps_build_script = fs::absolute(fs::path(working_dir) / "build_and_run.ps1");
 
-    if (fs::exists(exe_path)) {
-        cmd = "\"" + exe_path.string() + "\" manifest.json";
+    if (fs::exists(exe_path1)) {
+        cmd = "\"" + exe_path1.string() + "\" manifest.json";
+    } else if (fs::exists(exe_path2)) {
+        cmd = "\"" + exe_path2.string() + "\" manifest.json";
+    } else if (fs::exists(exe_path3)) {
+        cmd = "\"" + exe_path3.string() + "\" manifest.json";
+    } else if (fs::exists(exe_path4)) {
+        cmd = "\"" + exe_path4.string() + "\" manifest.json";
     } else if (fs::exists(ps_build_script)) {
         cmd = "powershell.exe -ExecutionPolicy Bypass -File \"" + ps_build_script.string() + "\" manifest.json";
     } else {
@@ -167,11 +236,14 @@ void ProcessRunner::worker_thread_func(std::string working_dir, std::string acti
         cmd = "powershell.exe -ExecutionPolicy Bypass -Command \"g++ -std=c++17 -I include src/*.cpp -ladvapi32 -lws2_32 -lsetupapi -o build/runner.exe; .\\build\\runner.exe manifest.json\"";
     }
 #else
-    fs::path bin_path = fs::absolute(fs::path(working_dir) / "build" / "motor_action_runner");
+    fs::path bin_path1 = fs::absolute(fs::path(working_dir) / "build" / "motor_action_runner");
+    fs::path bin_path2 = fs::absolute(fs::path(working_dir) / "build" / "runner");
     fs::path sh_build_script = fs::absolute(fs::path(working_dir) / "build_and_run.sh");
 
-    if (fs::exists(bin_path)) {
-        cmd = "\"" + bin_path.string() + "\" manifest.json";
+    if (fs::exists(bin_path1)) {
+        cmd = "\"" + bin_path1.string() + "\" manifest.json";
+    } else if (fs::exists(bin_path2)) {
+        cmd = "\"" + bin_path2.string() + "\" manifest.json";
     } else if (fs::exists(sh_build_script)) {
         cmd = "bash \"" + sh_build_script.string() + "\" manifest.json";
     } else {
@@ -385,8 +457,21 @@ void ProcessRunner::worker_thread_func(std::string working_dir, std::string acti
         int status;
         pid_t res = waitpid(pid, &status, WNOHANG);
         if (res == pid) {
+            // Đọc cạn toàn bộ buffer còn lại trong Pipe
+            while ((count = read(pipefd[0], buffer, sizeof(buffer) - 1)) > 0) {
+                buffer[count] = '\0';
+                for (ssize_t i = 0; i < count; ++i) {
+                    if (buffer[i] == '\n') {
+                        append_log(current_line);
+                        current_line.clear();
+                    } else if (buffer[i] != '\r') {
+                        current_line += buffer[i];
+                    }
+                }
+            }
             if (!current_line.empty()) {
                 append_log(current_line);
+                current_line.clear();
             }
             std::lock_guard<std::mutex> lock(mtx_);
             if (WIFEXITED(status)) {

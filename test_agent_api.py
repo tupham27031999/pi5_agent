@@ -17,7 +17,7 @@ import urllib.error
 import zipfile
 import io
 
-HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
+HOST = sys.argv[1] if len(sys.argv) > 1 else "10.112.231.16"
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8080
 BASE_URL = f"http://{HOST}:{PORT}"
 
@@ -89,15 +89,29 @@ def main():
     print(f"    Status Code: {code}")
     print(f"    Response: {json.dumps(resp, indent=2, ensure_ascii=False)}")
 
-    # 4. Test Emergency Stop
-    print("\n[4] Kiểm tra POST /api/emergency_stop...")
+    # 4. Test Preload Action ZIP
+    print("\n[4] Kiểm tra POST /api/action/preload (Pipeline Preloading)...")
+    zip_bytes_pre = create_dummy_action_zip()
+    code, resp = http_post("/api/action/preload", zip_bytes_pre, "application/zip")
+    print(f"    Status Code: {code}")
+    print(f"    Response: {json.dumps(resp, indent=2, ensure_ascii=False)}")
+
+    # 5. Test Execute Preloaded Action
+    print("\n[5] Kiểm tra POST /api/action/execute (Kích hoạt tức thời 0ms)...")
+    exec_payload = json.dumps({"action_id": "TEST_DUMMY_ACTION", "timeout_sec": 10.0, "parameters": {"test_param": 123}}).encode('utf-8')
+    code, resp = http_post("/api/action/execute", exec_payload, "application/json")
+    print(f"    Status Code: {code}")
+    print(f"    Response: {json.dumps(resp, indent=2, ensure_ascii=False)}")
+
+    # 6. Test Emergency Stop
+    print("\n[6] Kiểm tra POST /api/emergency_stop...")
     estop_payload = json.dumps({"reason": "Test E-Stop từ Python Script"}).encode('utf-8')
     code, resp = http_post("/api/emergency_stop", estop_payload, "application/json")
     print(f"    Status Code: {code}")
     print(f"    Response: {json.dumps(resp, indent=2, ensure_ascii=False)}")
 
-    # 5. Check status after E-Stop
-    print("\n[5] Kiểm tra lại GET /api/action/status sau khi E-Stop...")
+    # 7. Check status after E-Stop
+    print("\n[7] Kiểm tra lại GET /api/action/status sau khi E-Stop...")
     code, resp = http_get("/api/action/status")
     print(f"    Status Code: {code}")
     print(f"    Response: {json.dumps(resp, indent=2, ensure_ascii=False)}")

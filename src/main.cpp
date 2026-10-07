@@ -92,8 +92,13 @@ int main(int argc, char* argv[]) {
         res.set_json(200, json);
     });
 
+    fs::path actions_base_dir = workspace_abs / "actions";
+    try {
+        fs::create_directories(actions_base_dir);
+    } catch (...) {}
+
     // =========================================================================
-    // 2. ROUTE: POST /api/action/deploy (Nhận file ZIP & Chạy bài test)
+    // 2. ROUTE: POST /api/action/deploy (Nhận file ZIP & Chạy bài test ngay)
     // =========================================================================
     server.route("POST", "/api/action/deploy", [&](const HttpRequest& req, HttpResponse& res) {
         if (req.body.empty()) {
@@ -154,6 +159,160 @@ int main(int argc, char* argv[]) {
             resp.set("build_status", "SUCCESS");
             resp.set("execution_status", "RUNNING");
             resp.set("message", "Đã giải nén và khởi chạy thành công tiến trình Action!");
+            res.set_json(200, resp);
+        } else {
+            JsonValue err = JsonValue::object();
+            err.set("status", "START_ERROR");
+            err.set("message", "Không thể khởi động tiến trình worker!");
+            res.set_json(500, err);
+        }
+    });
+
+    // =========================================================================
+    // 2.1 ROUTE: POST /api/action/preload (Tiền nạp ZIP & Biên dịch trước chạy ngầm)
+    // =========================================================================
+    server.route("POST", "/api/action/preload", [&](const HttpRequest& req, HttpResponse& res) {
+        if (req.body.empty()) {
+            JsonValue err = JsonValue::object();
+            err.set("status", "ERROR");
+            err.set("message", "Payload rỗng! Cần gửi kèm file .zip của Action Package.");
+            res.set_json(400, err);
+            return;
+        }
+
+        std::cout << "[Preload] Nhận gói Action ZIP tiền nạp: " << req.body.size() << " bytes" << std::endl;
+
+        fs::path temp_dir = workspace_abs / "staging_temp";
+        try {
+            fs::remove_all(temp_dir);
+            fs::create_directories(temp_dir);
+        } catch (...) {}
+
+        bool ok = ZipUnpacker::extract_buffer(req.body, temp_dir.string());
+        if (!ok) {
+            JsonValue err = JsonValue::object();
+            err.set("status", "EXTRACT_ERROR");
+            err.set("message", "Lỗi phân tích hoặc giải nén gói ZIP tiền nạp!");
+            res.set_json(400, err);
+            return;
+        }
+
+        // Đọc action_id từ manifest.json
+        fs::path manifest_path = temp_dir / "manifest.json";
+        std::string action_id = "ACTION_PRELOADED";
+        if (fs::exists(manifest_path)) {
+            std::ifstream mf(manifest_path);
+            std::string content((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+            JsonValue mf_json = JsonValue::parse(content);
+            if (mf_json.has("action_id")) action_id = mf_json.get("action_id").as_string();
+        }
+
+        fs::path target_action_dir = actions_base_dir / action_id;
+        try {
+            if (fs::exists(target_action_dir)) {
+                // Giữ lại thư mục build cũ nếu có để CMake build incremental
+                fs::path old_build = target_action_dir / "build";
+                fs::path temp_build = temp_dir / "build";
+                if (fs::exists(old_build) && !fs::exists(temp_build)) {
+                    try { fs::rename(old_build, temp_build); } catch (...) {}
+                }
+                fs::remove_all(target_action_dir);
+            }
+            fs::create_directories(actions_base_dir);
+            fs::rename(temp_dir, target_action_dir);
+        } catch (const std::exception& e) {
+            std::cerr << "[Preload] Lỗi lưu trữ thư mục action: " << e.what() << std::endl;
+        }
+
+        std::cout << "[Preload] Bắt đầu biên dịch trước cho Action ID: " << action_id << std::endl;
+
+        // Tiến hành Pre-compile
+        std::string build_log;
+        bool compiled = ProcessRunner::instance().precompile_action(target_action_dir.string(), build_log);
+
+        JsonValue resp = JsonValue::object();
+        resp.set("status", compiled ? "PRELOAD_READY" : "PRELOAD_EXTRACTED");
+        resp.set("action_id", action_id);
+        resp.set("compiled", compiled);
+        resp.set("binary_ready", compiled);
+        resp.set("message", compiled ? "Đã tiền nạp và biên dịch trước thành công (Sẵn sàng chạy tức thời)!" : "Đã tiền nạp nhưng chưa hoàn tất biên dịch");
+        resp.set("compile_log", build_log);
+
+        res.set_json(200, resp);
+    });
+
+    // =========================================================================
+    // 2.2 ROUTE: POST /api/action/execute (Kích hoạt tức thời Action đã Preload)
+    // =========================================================================
+    server.route("POST", "/api/action/execute", [&](const HttpRequest& req, HttpResponse& res) {
+        std::string action_id = "";
+        double timeout_sec = 60.0;
+        JsonValue params = JsonValue::object();
+
+        if (!req.body.empty()) {
+            JsonValue body_json = JsonValue::parse(req.body_as_string());
+            if (body_json.has("action_id")) action_id = body_json.get("action_id").as_string();
+            if (body_json.has("timeout_sec")) timeout_sec = body_json.get("timeout_sec").as_double(60.0);
+            if (body_json.has("parameters")) params = body_json.get("parameters");
+        }
+
+        if (action_id.empty()) {
+            JsonValue err = JsonValue::object();
+            err.set("status", "ERROR");
+            err.set("message", "Thiếu action_id trong payload!");
+            res.set_json(400, err);
+            return;
+        }
+
+        if (ProcessRunner::instance().is_busy()) {
+            JsonValue err = JsonValue::object();
+            err.set("status", "BUSY");
+            err.set("message", "Một Action khác đang được thực thi. Vui lòng chờ hoặc gửi E-Stop!");
+            res.set_json(409, err);
+            return;
+        }
+
+        fs::path target_action_dir = actions_base_dir / action_id;
+        if (!fs::exists(target_action_dir)) {
+            target_action_dir = current_action_dir;
+            if (!fs::exists(target_action_dir)) {
+                JsonValue err = JsonValue::object();
+                err.set("status", "NOT_FOUND");
+                err.set("message", "Không tìm thấy thư mục của Action: " + action_id + ". Cần Preload trước!");
+                res.set_json(404, err);
+                return;
+            }
+        }
+
+        // Cập nhật tham số động vào manifest.json nếu có
+        fs::path manifest_path = target_action_dir / "manifest.json";
+        if (fs::exists(manifest_path) && params.type == JsonValue::Type::Object && !params.obj_val.empty()) {
+            try {
+                std::ifstream mf(manifest_path);
+                std::string content((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+                JsonValue mf_json = JsonValue::parse(content);
+                JsonValue cur_params = mf_json.has("parameters") ? mf_json.get("parameters") : JsonValue::object();
+                for (const auto& [k, v] : params.obj_val) {
+                    cur_params.set(k, v);
+                }
+                mf_json.set("parameters", cur_params);
+
+                std::ofstream out_mf(manifest_path);
+                out_mf << mf_json.dump(2);
+            } catch (const std::exception& e) {
+                std::cerr << "[Execute] Lỗi cập nhật parameters manifest: " << e.what() << std::endl;
+            }
+        }
+
+        std::cout << "[Execute] ⚡ Kích hoạt tức thời Action ID: " << action_id << " (Timeout: " << timeout_sec << "s)" << std::endl;
+
+        bool started = ProcessRunner::instance().deploy_and_run(target_action_dir.string(), action_id, timeout_sec);
+        if (started) {
+            JsonValue resp = JsonValue::object();
+            resp.set("action_id", action_id);
+            resp.set("execution_status", "RUNNING");
+            resp.set("status", "OK");
+            resp.set("message", "Đã kích hoạt tức thời tiến trình Action từ binary biên dịch sẵn!");
             res.set_json(200, resp);
         } else {
             JsonValue err = JsonValue::object();

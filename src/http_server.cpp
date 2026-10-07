@@ -81,13 +81,13 @@ void HttpServer::start() {
 #endif
 
     if (bind(s, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        std::cerr << "[HttpServer] Lỗi bind port " << port_ << "!" << std::endl;
+        std::cerr << "[HttpServer] Lỗi bind port " << port_ << ": " << strerror(errno) << " (Mã lỗi errno: " << errno << ")" << std::endl;
         CLOSE_SOCK(s);
         return;
     }
 
     if (listen(s, 16) < 0) {
-        std::cerr << "[HttpServer] Lỗi listen trên port " << port_ << "!" << std::endl;
+        std::cerr << "[HttpServer] Lỗi listen trên port " << port_ << ": " << strerror(errno) << " (Mã lỗi errno: " << errno << ")" << std::endl;
         CLOSE_SOCK(s);
         return;
     }
