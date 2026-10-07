@@ -53,6 +53,8 @@ public:
     /**
      * @brief Lấy chuỗi trạng thái dạng văn bản
      */
+    std::string get_state_string() const;
+
     /**
      * @brief Biên dịch trước (Pre-compile) Action Package mà không khởi chạy
      * @param working_dir Thư mục chứa mã nguồn action
