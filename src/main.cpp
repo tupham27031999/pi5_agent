@@ -96,6 +96,21 @@ int main(int argc, char* argv[]) {
         res.set_json(200, json);
     });
 
+    auto safe_clean_directory = [](const fs::path& dir) {
+        if (!fs::exists(dir)) {
+            try { fs::create_directories(dir); } catch (...) {}
+            return;
+        }
+#ifndef _WIN32
+        std::string cmd = "chmod -R 777 \"" + dir.string() + "\" 2>/dev/null; rm -rf \"" + dir.string() + "\"";
+        std::system(cmd.c_str());
+#else
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+#endif
+        try { fs::create_directories(dir); } catch (...) {}
+    };
+
     fs::path actions_base_dir = workspace_abs / "actions";
     try {
         fs::create_directories(actions_base_dir);
@@ -123,13 +138,8 @@ int main(int argc, char* argv[]) {
 
         std::cout << "[Deploy] Nhận gói Action ZIP kích thước: " << req.body.size() << " bytes" << std::endl;
 
-        // Dọn dẹp thư mục current_action
-        try {
-            fs::remove_all(current_action_dir);
-            fs::create_directories(current_action_dir);
-        } catch (const std::exception& e) {
-            std::cerr << "[Deploy] Lỗi dọn dẹp workspace: " << e.what() << std::endl;
-        }
+        // Dọn dẹp an toàn thư mục current_action
+        safe_clean_directory(current_action_dir);
 
         // Giải nén trực tiếp vào thư mục current_action
         bool ok = ZipUnpacker::extract_buffer(req.body, current_action_dir.string());
@@ -261,12 +271,12 @@ int main(int argc, char* argv[]) {
                 if (fs::exists(old_build) && !fs::exists(temp_build)) {
                     try { fs::rename(old_build, temp_build); } catch (...) {}
                 }
-                fs::remove_all(target_action_dir);
+                safe_clean_directory(target_action_dir);
             }
             fs::create_directories(actions_base_dir);
             fs::rename(source_dir, target_action_dir);
             if (fs::exists(temp_dir) && temp_dir != target_action_dir) {
-                try { fs::remove_all(temp_dir); } catch (...) {}
+                safe_clean_directory(temp_dir);
             }
         } catch (const std::exception& e) {
             std::cerr << "[Preload] Lỗi lưu trữ thư mục action: " << e.what() << std::endl;
@@ -321,14 +331,37 @@ int main(int argc, char* argv[]) {
         }
 
         fs::path target_action_dir = actions_base_dir / action_id;
-        if (!fs::exists(target_action_dir)) {
-            target_action_dir = current_action_dir;
-            if (!fs::exists(target_action_dir)) {
-                JsonValue err = JsonValue::object();
-                err.set("status", "NOT_FOUND");
-                err.set("message", "Không tìm thấy thư mục của Action: " + action_id + ". Cần Preload trước!");
-                res.set_json(404, err);
-                return;
+        if (!fs::exists(target_action_dir) || !fs::exists(target_action_dir / "manifest.json")) {
+            bool found = false;
+            if (fs::exists(actions_base_dir)) {
+                for (const auto& entry : fs::directory_iterator(actions_base_dir)) {
+                    if (entry.is_directory()) {
+                        fs::path cand_mf = entry.path() / "manifest.json";
+                        if (fs::exists(cand_mf)) {
+                            std::ifstream mf(cand_mf);
+                            std::string content((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+                            JsonValue mf_json = JsonValue::parse(content);
+                            std::string id_in_mf = mf_json.get("action_id").as_string();
+                            if (id_in_mf.empty()) id_in_mf = mf_json.get("name").as_string();
+                            if (id_in_mf == action_id || entry.path().filename().string() == action_id) {
+                                target_action_dir = entry.path();
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!found) {
+                if (fs::exists(current_action_dir / "manifest.json")) {
+                    target_action_dir = current_action_dir;
+                } else {
+                    JsonValue err = JsonValue::object();
+                    err.set("status", "NOT_FOUND");
+                    err.set("message", "Không tìm thấy thư mục của Action: " + action_id + ". Cần Preload trước!");
+                    res.set_json(404, err);
+                    return;
+                }
             }
         }
 
